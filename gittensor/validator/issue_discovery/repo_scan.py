@@ -128,6 +128,11 @@ async def _scan_repo(
     if not closed_issues:
         return 0
 
+    # GitHub REST `since` filters by updated_at, not closed_at, so response pages
+    # contain ancient issues re-touched within the window. Drop them client-side
+    # before we spend solver-lookup budget on them.
+    lookback_dt = _parse_iso(lookback_date)
+
     # Filter to miner-authored issues not already known
     unmatched: List[dict] = []
     for issue_raw in closed_issues:
@@ -142,6 +147,11 @@ async def _scan_repo(
         # Skip pull requests (GitHub REST /issues endpoint includes PRs)
         if 'pull_request' in issue_raw:
             continue
+
+        if lookback_dt is not None:
+            closed_at = _parse_iso(issue_raw.get('closed_at'))
+            if closed_at is None or closed_at < lookback_dt:
+                continue
 
         unmatched.append(issue_raw)
 
