@@ -157,9 +157,7 @@ mod issue_bounty_manager {
             issue_number: u32,
             target_bounty: u128,
         ) -> Result<u64, Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
 
             if target_bounty < MIN_BOUNTY {
                 return Err(Error::BountyTooLow);
@@ -213,9 +211,7 @@ mod issue_bounty_manager {
         /// Cancels an issue (owner only)
         #[ink(message)]
         pub fn cancel_issue(&mut self, issue_id: u64) -> Result<(), Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
 
             let mut issue = self.issues.get(issue_id).ok_or(Error::IssueNotFound)?;
 
@@ -251,9 +247,7 @@ mod issue_bounty_manager {
 
         #[ink(message)]
         pub fn add_validator(&mut self, hotkey: AccountId) -> Result<(), Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
             if self.validators.contains(&hotkey) {
                 return Err(Error::ValidatorAlreadyWhitelisted);
             }
@@ -265,9 +259,7 @@ mod issue_bounty_manager {
 
         #[ink(message)]
         pub fn remove_validator(&mut self, hotkey: AccountId) -> Result<(), Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
             let pos = self
                 .validators
                 .iter()
@@ -369,9 +361,7 @@ mod issue_bounty_manager {
         /// Sets a new owner
         #[ink(message)]
         pub fn set_owner(&mut self, new_owner: AccountId) -> Result<(), Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
             self.owner = new_owner;
             Ok(())
         }
@@ -383,9 +373,7 @@ mod issue_bounty_manager {
         /// current status and will be re-funded on next harvest.
         #[ink(message)]
         pub fn set_treasury_hotkey(&mut self, new_hotkey: AccountId) -> Result<(), Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
 
             let old_hotkey = self.treasury_hotkey;
 
@@ -541,9 +529,7 @@ mod issue_bounty_manager {
         /// Uses solver determined by validator consensus, not caller-specified.
         #[ink(message)]
         pub fn payout_bounty(&mut self, issue_id: u64) -> Result<Balance, Error> {
-            if self.env().caller() != self.owner {
-                return Err(Error::NotOwner);
-            }
+            self.require_owner()?;
 
             let issue = self.issues.get(issue_id).ok_or(Error::IssueNotFound)?;
 
@@ -650,6 +636,14 @@ mod issue_bounty_manager {
         // ========================================================================
         // Internal Functions
         // ========================================================================
+
+        /// Validates caller is the contract owner.
+        fn require_owner(&self) -> Result<(), Error> {
+            if self.env().caller() != self.owner {
+                return Err(Error::NotOwner);
+            }
+            Ok(())
+        }
 
         /// Validates caller is a whitelisted validator, returns caller AccountId.
         fn validate_whitelisted_caller(&self) -> Result<AccountId, Error> {
