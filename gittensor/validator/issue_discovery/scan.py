@@ -463,11 +463,9 @@ async def _score_miner_issues(
             )
             continue
 
-        # Valid-solved gate: solving PR must meet the repo's token threshold.
-        if cached.token_score >= cfg.min_token_score_for_valid_issue:
-            acc.valid_solved += 1
-
         # Same-account: discoverer == solver gets credibility only, no score
+        # and no valid_solved increment (#1255 — same-account solves must not
+        # satisfy the MIN_VALID_SOLVED_ISSUES eligibility gate).
         if issue.author_github_id == solving_pr.author_github_id:
             bt.logging.debug(
                 f'  issue #{issue.issue_number} ({issue.repo_full_name}): same-account '
@@ -475,6 +473,11 @@ async def _score_miner_issues(
             )
             continue
 
+        # One-issue-per-PR: non-canonical siblings (same solving PR closed
+        # multiple issues — only the canonical owner scores) get credibility
+        # only. Per #1269, they also must not satisfy the valid-solved
+        # eligibility gate: a single qualifying PR closing N issues should
+        # count as one valid solved discovery, not N.
         pr_key = (issue.repo_full_name, solving_pr.pr_number)
         own_marker = (issue.created_at or _FAR_FUTURE, issue.issue_number, evaluation.uid)
         if canonical_pr_owners.get(pr_key) != own_marker:
@@ -485,7 +488,7 @@ async def _score_miner_issues(
             continue
 
         # Quality gate: below-threshold solving PRs add credibility only, no
-        # discovery score.
+        # discovery score and no valid_solved increment.
         if cached.token_score < cfg.min_token_score_for_valid_issue:
             bt.logging.debug(
                 f'  issue #{issue.issue_number} ({issue.repo_full_name}): solving PR '
@@ -493,6 +496,10 @@ async def _score_miner_issues(
                 f'{cfg.min_token_score_for_valid_issue} — credibility only'
             )
             continue
+
+        # Past every credibility-only exclusion: this is a real, canonical,
+        # cross-author, qualifying solve. Counts toward the valid-solved gate.
+        acc.valid_solved += 1
 
         adapted = _mirror_issue_for_scoring(issue, solving_pr, repo_config, base_score=cached.base_score)
         if adapted is None:

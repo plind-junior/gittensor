@@ -1020,16 +1020,26 @@ class TestOpenIssueSpamSourceIsMirror:
             )
             for i in range(2)
         ]
-        solved_issues = [_issue_dict(issue_number=300 + i, author_github_id=f'discoverer{i}') for i in range(8)]
+        # Each solved issue uses a distinct solving PR: the one-issue-per-PR
+        # canonical rule (#1269) means siblings sharing one PR collapse to a
+        # single valid-solved count, which would make the miner ineligible.
+        solved_issues = [
+            _issue_dict(
+                issue_number=300 + i,
+                author_github_id=f'discoverer{i}',
+                solved_by_pr=400 + i,
+            )
+            for i in range(8)
+        ]
         client = Mock()
         client.get_miner_issues.return_value = _response(open_issues + solved_issues)
 
-        eval_ = _eval()
-        eval_.merged_prs = [_scored_mirror_pr('entrius/gittensor-ui', 100, token_score=100.0)]
+        ev = _eval()
+        ev.merged_prs = [_scored_mirror_pr('entrius/gittensor-ui', 400 + i, token_score=100.0) for i in range(8)]
 
         _run(
             run_issue_discovery(
-                {1: eval_},
+                {1: ev},
                 _mirror_repos('entrius/gittensor-ui'),
                 _EMPTY_LANGS,
                 _EMPTY_TOKEN_CONFIG,
@@ -1038,8 +1048,8 @@ class TestOpenIssueSpamSourceIsMirror:
         )
 
         # Below threshold → spam_mult=1.0 → discovery score is non-zero
-        assert eval_.issue_discovery_score > 0
-        assert eval_.total_open_issues == 2
+        assert ev.issue_discovery_score > 0
+        assert ev.total_open_issues == 2
 
 
 class TestCrossMinerOneIssuePerPr:
@@ -1155,9 +1165,12 @@ class TestCrossMinerOneIssuePerPr:
         """
         client = Mock()
 
-        # 6 unique-PR issues + 1 shared-PR issue per miner. A's #50 is earlier
-        # (April 1) than B's #51 (April 5), so A is canonical for PR 100.
-        a_issues = [_issue_dict(issue_number=10 + i, author_github_id='A', solved_by_pr=200 + i) for i in range(6)]
+        # 7 unique-PR issues + 1 shared-PR issue per miner — each miner has 7
+        # canonical valid solves on their own (clearing the eligibility gate)
+        # plus one shared-PR issue. A's #50 is earlier (April 1) than B's #51
+        # (April 5), so A is canonical for PR 100; per #1269 B's shared-PR
+        # solve no longer counts toward the valid-solved gate.
+        a_issues = [_issue_dict(issue_number=10 + i, author_github_id='A', solved_by_pr=200 + i) for i in range(7)]
         a_issues.append(
             _issue_dict(
                 issue_number=50,
@@ -1167,7 +1180,7 @@ class TestCrossMinerOneIssuePerPr:
                 created_at='2026-04-01T00:00:00Z',
             )
         )
-        b_issues = [_issue_dict(issue_number=20 + i, author_github_id='B', solved_by_pr=300 + i) for i in range(6)]
+        b_issues = [_issue_dict(issue_number=20 + i, author_github_id='B', solved_by_pr=300 + i) for i in range(7)]
         b_issues.append(
             _issue_dict(
                 issue_number=51,
@@ -1190,7 +1203,7 @@ class TestCrossMinerOneIssuePerPr:
         seed = MinerEvaluation(uid=99, hotkey='hkS', github_id='SEED')
         seed.merged_prs = [
             _scored_mirror_pr('entrius/gittensor-ui', pr_number)
-            for pr_number in [100] + list(range(200, 206)) + list(range(300, 306))
+            for pr_number in [100] + list(range(200, 207)) + list(range(300, 307))
         ]
 
         _run(
@@ -1203,24 +1216,28 @@ class TestCrossMinerOneIssuePerPr:
             )
         )
 
-        # Both miners count the shared-PR issue toward credibility.
-        assert e_a.total_solved_issues == 7
-        assert e_b.total_solved_issues == 7
-        assert e_a.total_valid_solved_issues == 7
+        # Both miners count the shared-PR issue toward credibility (8 total).
+        assert e_a.total_solved_issues == 8
+        assert e_b.total_solved_issues == 8
+        # A is canonical for all 8 PRs — valid_solved counts every one.
+        assert e_a.total_valid_solved_issues == 8
+        # B's shared PR is non-canonical (A's earlier issue claims it), so it
+        # contributes credibility only and does NOT increment valid_solved.
+        # Regression guard for #1269.
         assert e_b.total_valid_solved_issues == 7
         assert e_a.is_issue_eligible
         assert e_b.is_issue_eligible
 
         # ``issue_token_score`` accumulates only over SCORED PRs (default
         # ``_scored_mirror_pr`` token_score is 100.0), so this is the
-        # deterministic, time-decay-independent check: A has 7 scored, B has
-        # 6 (shared PR 100 is canonical for A only and credibility-only for B).
-        assert e_a.issue_token_score == 700.0
-        assert e_b.issue_token_score == 600.0
+        # deterministic, time-decay-independent check: A has 8 scored, B has
+        # 7 (shared PR 100 is canonical for A only and credibility-only for B).
+        assert e_a.issue_token_score == 800.0
+        assert e_b.issue_token_score == 700.0
         # All solving PRs share identical scoring inputs at this issue mix, so
-        # the discovery_score ratio collapses to 7:6.
+        # the discovery_score ratio collapses to 8:7.
         assert e_a.issue_discovery_score > e_b.issue_discovery_score > 0
-        assert e_a.issue_discovery_score / e_b.issue_discovery_score == pytest.approx(7 / 6, rel=1e-2)
+        assert e_a.issue_discovery_score / e_b.issue_discovery_score == pytest.approx(8 / 7, rel=1e-2)
 
     def test_within_miner_one_issue_per_pr_still_holds(self):
         """One miner authoring two issues both closed by the same PR — the
@@ -1269,9 +1286,11 @@ class TestCrossMinerOneIssuePerPr:
             )
         )
 
-        # 8 solved (both shared-PR issues counted for credibility), eligible.
+        # 8 solved total (both shared-PR issues counted toward credibility).
         assert eval_.total_solved_issues == 8
-        assert eval_.total_valid_solved_issues == 8
+        # Per #1269: the non-canonical shared-PR sibling does NOT increment
+        # valid_solved. 6 distinct-PR + 1 canonical shared = 7.
+        assert eval_.total_valid_solved_issues == 7
         assert eval_.is_issue_eligible
         # ``issue_token_score`` only accumulates over SCORED PRs (default
         # ``_scored_mirror_pr`` token_score is 100.0). 7 distinct scoring PRs
@@ -1321,6 +1340,50 @@ class TestCrossMinerOneIssuePerPr:
         assert e_b.issue_token_score == 700.0
         assert e_a.issue_discovery_score == e_b.issue_discovery_score
         assert e_a.issue_discovery_score > 0
+
+    def test_one_pr_closing_n_issues_counts_as_one_valid_solve(self):
+        """Regression for #1269.
+
+        Seven issues all closed by the same qualifying PR should satisfy the
+        valid-solved gate as ONE canonical valid solve, not seven. Before the
+        fix, non-canonical siblings still bumped ``valid_solved_count`` and
+        let a single qualifying PR satisfy ``min_valid_solved_issues = 7``.
+        """
+        # All seven issues solved by PR #100. Per issue-#1269, this should
+        # collapse to a single canonical valid solve.
+        miner_issues = [
+            _issue_dict(
+                issue_number=10 + i,
+                author_github_id='999',
+                solved_by_pr=100,
+                solving_pr_author='SOLVER',
+                created_at=f'2026-04-{i + 1:02d}T00:00:00Z',
+            )
+            for i in range(7)
+        ]
+        client = Mock()
+        client.get_miner_issues.return_value = _response(miner_issues)
+
+        ev = _eval(uid=1, github_id='999')
+        seed = MinerEvaluation(uid=99, hotkey='hkS', github_id='SEED')
+        seed.merged_prs = [_scored_mirror_pr('entrius/gittensor-ui', 100, token_score=100.0)]
+
+        _run(
+            run_issue_discovery(
+                {1: ev, 99: seed},
+                _mirror_repos('entrius/gittensor-ui'),
+                _EMPTY_LANGS,
+                _EMPTY_TOKEN_CONFIG,
+                client=client,
+            )
+        )
+
+        # All seven issues count for credibility (denominator behavior is
+        # unchanged), but only the canonical one — the earliest-created issue
+        # claiming PR #100 — counts toward the valid-solved eligibility gate.
+        assert ev.total_solved_issues == 7
+        assert ev.total_valid_solved_issues == 1
+        assert not ev.is_issue_eligible
 
     def test_emission_share_does_not_scale_issue_discovery_raw_score(self):
         """Repo emission_share is enforced by the final allocator, not by
