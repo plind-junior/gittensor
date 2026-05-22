@@ -274,6 +274,53 @@ class TestRepositoryConfigMirrorScoringFields:
         assert repos['foo/fixed'].fixed_base_score == pytest.approx(12.5)
         assert repos['foo/defaults'].fixed_base_score is None
 
+    def test_loader_coerces_integer_fixed_base_score_to_float(self, tmp_path, monkeypatch):
+        from gittensor.validator.utils import load_weights as lw
+
+        (tmp_path / 'master_repositories.json').write_text(
+            json.dumps({'foo/int': {'emission_share': 0.5, 'fixed_base_score': 10}})
+        )
+        monkeypatch.setattr(lw, '_get_weights_dir', lambda: tmp_path)
+
+        repos = lw.load_master_repo_weights()
+
+        assert isinstance(repos['foo/int'].fixed_base_score, float)
+        assert repos['foo/int'].fixed_base_score == pytest.approx(10.0)
+
+    @pytest.mark.parametrize('bad_value', [-1.0, 100.1, 250.0])
+    def test_loader_rejects_out_of_range_fixed_base_score(self, tmp_path, monkeypatch, bad_value):
+        from gittensor.validator.utils import load_weights as lw
+
+        (tmp_path / 'master_repositories.json').write_text(
+            json.dumps({'foo/bad': {'emission_share': 0.5, 'fixed_base_score': bad_value}})
+        )
+        monkeypatch.setattr(lw, '_get_weights_dir', lambda: tmp_path)
+
+        with pytest.raises(RepositoryRegistryError, match='fixed_base_score must be within'):
+            lw.load_master_repo_weights()
+
+    def test_loader_rejects_non_numeric_fixed_base_score(self, tmp_path, monkeypatch):
+        from gittensor.validator.utils import load_weights as lw
+
+        (tmp_path / 'master_repositories.json').write_text(
+            json.dumps({'foo/bad': {'emission_share': 0.5, 'fixed_base_score': 'high'}})
+        )
+        monkeypatch.setattr(lw, '_get_weights_dir', lambda: tmp_path)
+
+        with pytest.raises(RepositoryRegistryError):
+            lw.load_master_repo_weights()
+
+    def test_loader_rejects_bool_fixed_base_score(self, tmp_path, monkeypatch):
+        from gittensor.validator.utils import load_weights as lw
+
+        (tmp_path / 'master_repositories.json').write_text(
+            json.dumps({'foo/bad': {'emission_share': 0.5, 'fixed_base_score': True}})
+        )
+        monkeypatch.setattr(lw, '_get_weights_dir', lambda: tmp_path)
+
+        with pytest.raises(RepositoryRegistryError):
+            lw.load_master_repo_weights()
+
     def test_loader_parses_eligibility_overrides(self, tmp_path, monkeypatch):
         from gittensor.validator.utils import load_weights as lw
 

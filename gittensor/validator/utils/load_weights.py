@@ -152,8 +152,10 @@ class RepositoryConfig:
             same fnmatch wildcard syntax as ``additional_acceptable_branches``.
         default_label_multiplier: Multiplier used when no configured label
             pattern matches. Defaults to neutral scoring.
-        fixed_base_score: Override for the PR base score. Expected
-            to be within [0.0, 100.0]; range is enforced by the live-config test.
+        fixed_base_score: Override for the PR base score. Coerced to float and
+            range-checked to [0.0, 100.0] by the loader (see
+            ``_validate_emission_shares``); a bad value raises
+            ``RepositoryRegistryError`` at load.
         eligibility: Per-repo overrides for the eligibility / spam knobs. Unset
             fields fall back to the global default constants — see
             ``resolve_eligibility``.
@@ -292,6 +294,18 @@ def _coerce_share(repo_name: str, field_name: str, raw_value: Any) -> float:
     return float(raw_value)
 
 
+def _coerce_override(repo_name: str, field_name: str, raw_value: Any, caster: Any) -> Any:
+    """Coerce an optional top-level numeric override, or ``None`` when unset."""
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        raise RepositoryRegistryError(f'{repo_name} {field_name} must be a number, got bool')
+    try:
+        return caster(raw_value)
+    except (TypeError, ValueError) as e:
+        raise RepositoryRegistryError(f'{repo_name} {field_name} must be a number: {e}') from e
+
+
 _ELIGIBILITY_INT_FIELDS = (
     'min_valid_merged_prs',
     'excessive_pr_penalty_base_threshold',
@@ -419,6 +433,10 @@ def _validate_emission_shares(configs: Dict[str, RepositoryConfig]) -> None:
         if not 0.0 <= config.maintainer_cut <= 1.0:
             raise RepositoryRegistryError(
                 f'{repo_name} maintainer_cut must be within [0, 1], got {config.maintainer_cut}'
+            )
+        if config.fixed_base_score is not None and not 0.0 <= config.fixed_base_score <= 100.0:
+            raise RepositoryRegistryError(
+                f'{repo_name} fixed_base_score must be within [0, 100], got {config.fixed_base_score}'
             )
         total_share += config.emission_share
 
@@ -549,7 +567,9 @@ def load_master_repo_weights() -> Dict[str, RepositoryConfig]:
                         else None
                     ),
                     default_label_multiplier=float(metadata.get('default_label_multiplier', 1.0)),
-                    fixed_base_score=metadata.get('fixed_base_score'),
+                    fixed_base_score=_coerce_override(
+                        repo_name, 'fixed_base_score', metadata.get('fixed_base_score'), float
+                    ),
                     eligibility=_parse_eligibility(repo_name, metadata.get('eligibility')),
                     scoring=_parse_scoring(repo_name, metadata.get('scoring')),
                     maintainer_cut=_coerce_share(repo_name, 'maintainer_cut', metadata.get('maintainer_cut', 0.0)),
