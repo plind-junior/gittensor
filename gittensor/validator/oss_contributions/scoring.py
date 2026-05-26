@@ -9,7 +9,8 @@ from gittensor.classes import MinerEvaluation, RepoEvaluation
 
 if TYPE_CHECKING:
     from gittensor.validator.oss_contributions.mirror.scored_pr import ScoredPR
-from gittensor.constants import MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER
+from gittensor.constants import MAX_OPEN_PR_REVIEW_COLLATERAL_MULTIPLIER, SPAM_PENALTY_ZERO_AT_OVERAGE
+from gittensor.utils.utils import spam_penalty_multiplier
 from gittensor.validator.oss_contributions.credibility import check_eligibility
 from gittensor.validator.utils.load_weights import (
     RepositoryConfig,
@@ -74,10 +75,11 @@ def calculate_pr_spam_penalty_multiplier(
 ) -> float:
     """Apply the penalty for excessive open PRs within one repository.
 
-    Binary multiplier: 1.0 if the repo's open PRs <= threshold, 0.0 otherwise.
+    Ramps 1.0 → 0.0 over ``SPAM_PENALTY_ZERO_AT_OVERAGE`` PRs past the threshold,
+    so one extra in-flight PR costs a slice of score rather than all of it (#1370).
     """
     threshold = calculate_open_pr_threshold(cfg, total_token_score)
-    return 1.0 if total_open_prs <= threshold else 0.0
+    return spam_penalty_multiplier(total_open_prs, threshold, SPAM_PENALTY_ZERO_AT_OVERAGE)
 
 
 def finalize_miner_scores(

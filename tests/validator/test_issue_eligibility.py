@@ -6,7 +6,11 @@ number of *valid* solved issues (solving PR meets the token threshold).
 
 import pytest
 
-from gittensor.validator.issue_discovery.scoring import check_issue_eligibility
+from gittensor.constants import SPAM_PENALTY_ZERO_AT_OVERAGE
+from gittensor.validator.issue_discovery.scoring import (
+    calculate_open_issue_spam_multiplier,
+    check_issue_eligibility,
+)
 from gittensor.validator.utils.load_weights import RepoEligibilityConfig, resolve_eligibility
 
 _CFG = resolve_eligibility(None)  # defaults: 3 valid solved issues, 0.80 issue credibility
@@ -44,3 +48,19 @@ def test_per_repo_override_relaxes_gate() -> None:
     relaxed = resolve_eligibility(RepoEligibilityConfig(min_valid_solved_issues=1, min_issue_credibility=0.0))
     is_eligible, _, _ = check_issue_eligibility(relaxed, solved_count=1, valid_solved_count=1, closed_count=5)
     assert is_eligible is True
+
+
+class TestOpenIssueSpamMultiplier:
+    """Open-issue spam penalty ramps down instead of snapping to zero (#1370)."""
+
+    _BASE = _CFG.open_issue_spam_base_threshold
+
+    def test_full_score_at_threshold(self):
+        assert calculate_open_issue_spam_multiplier(_CFG, self._BASE, 0.0) == 1.0
+
+    def test_ramps_down_over_threshold(self):
+        assert calculate_open_issue_spam_multiplier(_CFG, self._BASE + 1, 0.0) == pytest.approx(2 / 3)
+        assert calculate_open_issue_spam_multiplier(_CFG, self._BASE + 2, 0.0) == pytest.approx(1 / 3)
+
+    def test_zero_at_full_overage(self):
+        assert calculate_open_issue_spam_multiplier(_CFG, self._BASE + SPAM_PENALTY_ZERO_AT_OVERAGE, 0.0) == 0.0
