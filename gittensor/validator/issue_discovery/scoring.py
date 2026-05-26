@@ -15,6 +15,9 @@ from typing import TYPE_CHECKING, Tuple
 
 import bittensor as bt
 
+from gittensor.constants import SPAM_PENALTY_ZERO_AT_OVERAGE
+from gittensor.utils.utils import spam_penalty_multiplier
+
 if TYPE_CHECKING:
     from gittensor.validator.utils.load_weights import ResolvedEligibility
 
@@ -38,14 +41,15 @@ def calculate_issue_review_quality_multiplier(changes_requested_count: int, revi
 def calculate_open_issue_spam_multiplier(
     cfg: 'ResolvedEligibility', total_open_issues: int, solved_token_score: float
 ) -> float:
-    """Binary penalty for excessive open issues within one repository.
+    """Penalty for excessive open issues within one repository.
 
     threshold = min(base + floor(token_score / per_slot), max)
-    Returns 1.0 if at or under threshold, 0.0 otherwise.
+    Ramps 1.0 → 0.0 over ``SPAM_PENALTY_ZERO_AT_OVERAGE`` issues past the threshold,
+    so one extra open issue costs a slice of score rather than all of it (#1370).
     """
     bonus = int(solved_token_score // cfg.open_issue_spam_token_score_per_slot)
     threshold = min(cfg.open_issue_spam_base_threshold + bonus, cfg.max_open_issue_threshold)
-    return 1.0 if total_open_issues <= threshold else 0.0
+    return spam_penalty_multiplier(total_open_issues, threshold, SPAM_PENALTY_ZERO_AT_OVERAGE)
 
 
 def calculate_issue_credibility(solved_count: int, closed_count: int) -> float:
