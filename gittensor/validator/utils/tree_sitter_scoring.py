@@ -83,6 +83,22 @@ def parse_code(content: str, language: str) -> Optional[Tree]:
         return None
 
 
+def exceeds_max_file_bytes(content: str) -> bool:
+    """Whether ``content`` exceeds MAX_FILE_SIZE_BYTES once UTF-8 encoded.
+
+    A UTF-8 code point is 1–4 bytes, so the character count brackets the byte
+    count: ``len <= bytes <= 4 * len``. Those bounds settle the size gate for
+    normal-sized files without a full encode (the parse step already encodes
+    once); only files in the narrow ambiguous band are encoded to decide.
+    """
+    char_count = len(content)
+    if char_count > MAX_FILE_SIZE_BYTES:
+        return True
+    if char_count * 4 <= MAX_FILE_SIZE_BYTES:
+        return False
+    return len(content.encode('utf-8')) > MAX_FILE_SIZE_BYTES
+
+
 # Type alias for node signatures
 # Structural: ("structural", node_type)
 # Leaf: ("leaf", node_type, text_bytes)
@@ -302,9 +318,8 @@ def calculate_token_score_from_file_changes(
                     is_test_file=is_test_file,
                     scoring_method='skipped-binary',
                 )
-            elif len(content_pair.new_content.encode('utf-8')) > MAX_FILE_SIZE_BYTES or (
-                content_pair.old_content is not None
-                and len(content_pair.old_content.encode('utf-8')) > MAX_FILE_SIZE_BYTES
+            elif exceeds_max_file_bytes(content_pair.new_content) or (
+                content_pair.old_content is not None and exceeds_max_file_bytes(content_pair.old_content)
             ):
                 bt.logging.debug(f'  │   {file.short_name}: skipped (file too large, >{MAX_FILE_SIZE_BYTES} bytes)')
                 file_result = FileScoreResult(
